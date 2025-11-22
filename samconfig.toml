@@ -3,7 +3,8 @@
 version = 0.1
 
 [default.global.parameters]
-stack_name = "auto-pr-bot"
+stack_name = "auto-pr-bot-prod-2"
+region = "eu-central-1"
 
 [default.build.parameters]
 parallel = true
@@ -16,6 +17,8 @@ capabilities = "CAPABILITY_IAM"
 confirm_changeset = true
 resolve_s3 = true
 resolve_image_repos = true
+stack_name = "auto-pr-bot-prod-2"
+s3_prefix = "auto-pr-bot-prod-2"
 
 [default.package.parameters]
 resolve_s3 = true
