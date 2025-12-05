@@ -1,0 +1,10 @@
+{
+  "body": "{\"repositoryUrl\":\"https://github.com/stefali1-dev/fii-itist-poc\",\"githubUsername\":\"stefali1-dev\",\"modificationPrompt\":\"Update README.md to remove the architecture photo.\"}",
+  "resource": "/process",
+  "path": "/process",
+  "httpMethod": "POST",
+  "isBase64Encoded": false,
+  "headers": {
+    "Content-Type": "application/json"
+  }
+}

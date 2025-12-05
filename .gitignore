@@ -32,3 +32,6 @@ go.work.sum
 # .vscode/·s
 
 .aws-sam
+env.json
+
+copilot-instructions.md
