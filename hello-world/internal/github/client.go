@@ -103,3 +103,80 @@ func (c *Client) GetAuthenticatedUser(ctx context.Context) (*github.User, error)
 
 	return user, nil
 }
+
+// CreatePullRequest creates a pull request from the fork to the upstream repository
+func (c *Client) CreatePullRequest(ctx context.Context, upstreamOwner, upstreamRepo, forkOwner, title, body, headBranch, baseBranch string) (*github.PullRequest, error) {
+	// The head should be in format "forkOwner:branch"
+	head := fmt.Sprintf("%s:%s", forkOwner, headBranch)
+
+	newPR := &github.NewPullRequest{
+		Title: github.String(title),
+		Body:  github.String(body),
+		Head:  github.String(head),
+		Base:  github.String(baseBranch),
+	}
+
+	pr, _, err := c.client.PullRequests.Create(ctx, upstreamOwner, upstreamRepo, newPR)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create pull request: %w", err)
+	}
+
+	return pr, nil
+}
+
+// GetDefaultBranch retrieves the default branch of a repository
+func (c *Client) GetDefaultBranch(ctx context.Context, owner, repo string) (string, error) {
+	repository, _, err := c.client.Repositories.Get(ctx, owner, repo)
+	if err != nil {
+		return "", fmt.Errorf("failed to get repository: %w", err)
+	}
+
+	return repository.GetDefaultBranch(), nil
+}
+
+// ListOpenPullRequests lists open pull requests from a specific head (fork owner:branch)
+func (c *Client) ListOpenPullRequests(ctx context.Context, upstreamOwner, upstreamRepo, forkOwner, headBranch string) ([]*github.PullRequest, error) {
+	head := fmt.Sprintf("%s:%s", forkOwner, headBranch)
+
+	opts := &github.PullRequestListOptions{
+		State: "open",
+		Head:  head,
+		ListOptions: github.ListOptions{
+			PerPage: 100,
+		},
+	}
+
+	prs, _, err := c.client.PullRequests.List(ctx, upstreamOwner, upstreamRepo, opts)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list pull requests: %w", err)
+	}
+
+	return prs, nil
+}
+
+// ClosePullRequest closes a pull request with a comment
+func (c *Client) ClosePullRequest(ctx context.Context, owner, repo string, prNumber int, comment string) error {
+	// Add a comment explaining the closure
+	if comment != "" {
+		prComment := &github.IssueComment{
+			Body: github.String(comment),
+		}
+		_, _, err := c.client.Issues.CreateComment(ctx, owner, repo, prNumber, prComment)
+		if err != nil {
+			return fmt.Errorf("failed to add comment: %w", err)
+		}
+	}
+
+	// Close the PR
+	state := "closed"
+	prUpdate := &github.PullRequest{
+		State: &state,
+	}
+
+	_, _, err := c.client.PullRequests.Edit(ctx, owner, repo, prNumber, prUpdate)
+	if err != nil {
+		return fmt.Errorf("failed to close pull request: %w", err)
+	}
+
+	return nil
+}

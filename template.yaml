@@ -28,6 +28,7 @@ Resources:
       Environment:
         Variables:
           GITHUB_TOKEN: ""  # Will be overridden by env.json locally or Parameter Store in production
+          OPENAI_API_KEY: ""  # Will be overridden by env.json locally or Parameter Store in production
     Metadata:
       DockerTag: go1.x-v1
       DockerContext: ./hello-world
