@@ -1,137 +1,136 @@
 # auto-pr-bot
 
-This is a sample template for auto-pr-bot - Below is a brief explanation of what we have generated for you:
+An AWS Lambda function that automates contributions to open source repositories through an intelligent, multi-step LLM-powered workflow.
 
-```bash
-.
-├── README.md                   <-- This instructions file
-├── hello-world                 <-- Source code for a lambda function
-│   ├── main.go                 <-- Lambda function code
-│   └── main_test.go            <-- Unit tests
-│   └── Dockerfile              <-- Dockerfile
-└── template.yaml
+## Overview
+
+This bot accepts HTTP requests to automatically:
+1. Fork a target repository (or reuse existing fork)
+2. Clone the fork and reset it to match upstream
+3. Create a new timestamped feature branch
+4. Use OpenAI to analyze the repository and determine which files to modify
+5. Generate and apply code modifications based on your prompt
+6. Commit and push changes
+7. Create a Pull Request to the upstream repository
+8. Optionally add a GitHub user as a collaborator to the fork (giving them write access to edit the PR)
+
+## API Request Format
+
+Send a POST request to the Lambda endpoint with the following JSON body:
+
+```json
+{
+  "repositoryUrl": "https://github.com/owner/repo",
+  "modificationPrompt": "Description of the changes you want to make",
+  "githubUsername": "optional-github-username"
+}
 ```
+
+### Request Fields
+
+- **`repositoryUrl`** (required): The full GitHub repository URL to contribute to
+  - Example: `"https://github.com/owner/repo"`
+
+- **`modificationPrompt`** (required): A description of what changes you want to make
+  - Example: `"Add error handling to the main function"`
+  - Example: `"Update README.md to include installation instructions"`
+
+- **`githubUsername`** (optional): A GitHub username to add as a collaborator to the fork
+  - If provided, the user will receive an invitation to collaborate on the fork
+  - Once accepted, they'll have write access to edit the PR and push changes
+  - If omitted, only the bot's account will have access to the fork
+
+### Response
+
+The Lambda returns immediately with a 202 Accepted status:
+
+```json
+{
+  "status": "processing",
+  "message": "Your request is being processed. Check CloudWatch logs for progress.",
+  "repository": "https://github.com/owner/repo"
+}
+```
+
+The actual processing happens asynchronously. Check CloudWatch logs for detailed progress and the final PR URL.
 
 ## Requirements
 
-* AWS CLI already configured with Administrator permission
+* [AWS CLI](https://aws.amazon.com/cli/) configured with appropriate permissions
 * [Docker installed](https://www.docker.com/community-edition)
-* SAM CLI - [Install the SAM CLI](https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/serverless-sam-cli-install.html)
+* [SAM CLI](https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/serverless-sam-cli-install.html)
+* [Go 1.23+](https://golang.org/doc/install)
+* GitHub Personal Access Token (with repo and workflow permissions)
+* OpenAI API Key
 
-You may need the following for local testing.
-* [Golang](https://golang.org)
+## Environment Variables
 
-## Setup process
+Create an `env.json` file (see `env.json.example`) with:
 
-### Installing dependencies & building the target 
+```json
+{
+  "AutoPRBotFunction": {
+    "GITHUB_TOKEN": "your-github-token",
+    "OPENAI_API_KEY": "your-openai-api-key"
+  }
+}
+```
 
-In this example we use the built-in `sam build` to build a docker image from a Dockerfile and then copy the source of your application inside the Docker image.  
-Read more about [SAM Build here](https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/sam-cli-command-reference-sam-build.html) 
+## Local Development
 
-### Local development
+### Building
 
-**Invoking function locally through local API Gateway**
+Build the Docker image and Lambda function:
 
 ```bash
-sam local start-api
+sam build
 ```
 
-If the previous command ran successfully you should now be able to hit the following local endpoint to invoke your function `http://localhost:3000/hello`
+### Local Testing
 
-**SAM CLI** is used to emulate both Lambda and API Gateway locally and uses our `template.yaml` to understand how to bootstrap this environment (runtime, where the source code is, etc.) - The following excerpt is what the CLI will read in order to initialize an API and its routes:
+Invoke the function locally with a test event:
 
-```yaml
-...
-Events:
-    HelloWorld:
-        Type: Api # More info about API Event Source: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#api
-        Properties:
-            Path: /hello
-            Method: get
+```bash
+sam local invoke -e events/test-event.json --env-vars env.json
 ```
 
-## Packaging and deployment
+**Note:** Local invocation processes synchronously. In AWS, the Lambda detects API Gateway calls and invokes itself asynchronously to avoid the 29-second timeout.
 
-AWS Lambda Golang runtime requires a flat folder with the executable generated on build step. SAM will use `CodeUri` property to know where to look up for the application:
+## Deployment
 
-```yaml
-...
-    FirstFunction:
-        Type: AWS::Serverless::Function
-        Properties:
-            CodeUri: hello_world/
-            ...
-```
-
-To deploy your application for the first time, run the following in your shell:
+Deploy to AWS for the first time:
 
 ```bash
 sam deploy --guided
 ```
 
-The command will package and deploy your application to AWS, with a series of prompts:
+For subsequent deployments:
 
-* **Stack Name**: The name of the stack to deploy to CloudFormation. This should be unique to your account and region, and a good starting point would be something matching your project name.
-* **AWS Region**: The AWS region you want to deploy your app to.
-* **Confirm changes before deploy**: If set to yes, any change sets will be shown to you before execution for manual review. If set to no, the AWS SAM CLI will automatically deploy application changes.
-* **Allow SAM CLI IAM role creation**: Many AWS SAM templates, including this example, create AWS IAM roles required for the AWS Lambda function(s) included to access AWS services. By default, these are scoped down to minimum required permissions. To deploy an AWS CloudFormation stack which creates or modifies IAM roles, the `CAPABILITY_IAM` value for `capabilities` must be provided. If permission isn't provided through this prompt, to deploy this example you must explicitly pass `--capabilities CAPABILITY_IAM` to the `sam deploy` command.
-* **Save arguments to samconfig.toml**: If set to yes, your choices will be saved to a configuration file inside the project, so that in the future you can just re-run `sam deploy` without parameters to deploy changes to your application.
-
-You can find your API Gateway Endpoint URL in the output values displayed after deployment.
-
-### Testing
-
-We use `testing` package that is built-in in Golang and you can simply run the following command to run our tests locally:
-
-```shell
-cd ./hello-world/
-go test -v .
-```
-# Appendix
-
-### Golang installation
-
-Please ensure Go 1.x (where 'x' is the latest version) is installed as per the instructions on the official golang website: https://golang.org/doc/install
-
-A quickstart way would be to use Homebrew, chocolatey or your linux package manager.
-
-#### Homebrew (Mac)
-
-Issue the following command from the terminal:
-
-```shell
-brew install golang
+```bash
+sam deploy
 ```
 
-If it's already installed, run the following command to ensure it's the latest version:
+The deployment will output the API Gateway endpoint URL that you can use to invoke the Lambda function.
 
-```shell
-brew update
-brew upgrade golang
-```
+## How It Works
 
-#### Chocolatey (Windows)
+### Async Workflow
 
-Issue the following command from the powershell:
+The Lambda uses an async invocation pattern to handle long-running operations:
 
-```shell
-choco install golang
-```
+1. **Sync Request** (from API Gateway): Detects the API Gateway call, invokes itself asynchronously, returns 202 Accepted immediately
+2. **Async Processing**: The self-invoked Lambda processes the repository, creates the PR, and logs all details to CloudWatch
 
-If it's already installed, run the following command to ensure it's the latest version:
+### Multi-Step LLM Process
 
-```shell
-choco upgrade golang
-```
+The bot uses OpenAI in multiple steps for intelligent code modification:
 
-## Bringing to the next level
+1. **Analyze**: Examines the repository structure to determine which files to read
+2. **Read**: Reads the identified files (with smart truncation for large files)
+3. **Plan**: Determines which files need modification based on the prompt
+4. **Generate**: Creates complete modified file contents for each file
+5. **Apply**: Writes the changes, commits, and pushes to a new timestamped branch
 
-Here are a few ideas that you can use to get more acquainted as to how this overall process works:
+### Multiple PRs Support
 
-* Create an additional API resource (e.g. /hello/{proxy+}) and return the name requested through this new path
-* Update unit test to capture that
-* Package & Deploy
-
-Next, you can use the following resources to know more about beyond hello world samples and how others structure their Serverless applications:
-
-* [AWS Serverless Application Repository](https://aws.amazon.com/serverless/serverlessrepo/)
+Each request creates a unique timestamped branch (`auto-pr-bot/<unix-timestamp>`), allowing multiple concurrent PRs per repository. The bot only closes PRs from the default branch, leaving feature-branch PRs independent.
