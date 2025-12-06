@@ -1,5 +1,5 @@
 {
-  "body": "{\"repositoryUrl\":\"https://github.com/stefali1-dev/fii-itist-poc\",\"githubUsername\":\"stefali1-dev\",\"modificationPrompt\":\"Update README.md to remove the architecture photo.\"}",
+  "body": "{\"repositoryUrl\":\"https://github.com/FrentescuCezar/FII-BachelorThesis\",\"githubUsername\":\"stefali1-dev\",\"modificationPrompt\":\"Read README.md and correct any gramatical errors if there are any. Don't do any more modifications than necessary. Be careful not to create a messy diff with useless modifications. Only modifications that add value.\"}",
   "resource": "/process",
   "path": "/process",
   "httpMethod": "POST",

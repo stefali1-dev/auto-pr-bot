@@ -403,7 +403,22 @@ func (h *Handler) processRepository(ctx context.Context, req *models.Request) (s
 		return "", fmt.Errorf("failed to create pull request: %w", err)
 	}
 
-	log.Printf("Pull request created: %s", pr.GetHTMLURL()) // Print summary to CloudWatch
+	log.Printf("Pull request created: %s", pr.GetHTMLURL())
+
+	// Step 9: Add GitHub user as collaborator to the fork if provided
+	if req.GitHubUsername != "" {
+		log.Printf("Step 9: Adding %s as collaborator to fork %s/%s...", req.GitHubUsername, user.GetLogin(), repo)
+		if err := h.githubClient.AddCollaborator(ctx, user.GetLogin(), repo, req.GitHubUsername); err != nil {
+			log.Printf("Warning: failed to add collaborator %s: %v", req.GitHubUsername, err)
+			log.Printf("The PR was created successfully, but the user may need to be added manually")
+		} else {
+			log.Printf("Successfully added %s as collaborator to fork - they have write access and can push to PR branches", req.GitHubUsername)
+		}
+	} else {
+		log.Printf("No GitHub username provided - skipping collaborator assignment")
+	}
+
+	// Print summary to CloudWatch
 	log.Printf("\n=== MODIFICATION SUMMARY ===")
 	log.Printf("Repository: %s/%s", owner, repo)
 	log.Printf("Fork: %s", fork.GetHTMLURL())

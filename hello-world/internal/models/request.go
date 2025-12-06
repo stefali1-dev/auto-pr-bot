@@ -12,9 +12,6 @@ func (r *Request) Validate() error {
 	if r.RepositoryURL == "" {
 		return ErrMissingRepositoryURL
 	}
-	if r.GitHubUsername == "" {
-		return ErrMissingGitHubUsername
-	}
 	if r.ModificationPrompt == "" {
 		return ErrMissingModificationPrompt
 	}

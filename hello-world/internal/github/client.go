@@ -190,3 +190,19 @@ func (c *Client) DeleteBranch(ctx context.Context, owner, repo, branch string) e
 	}
 	return nil
 }
+
+// AddCollaborator adds a collaborator to a repository, giving them write access
+// This allows the user to push directly to the fork and edit PR branches
+func (c *Client) AddCollaborator(ctx context.Context, owner, repo, username string) error {
+	// Use "push" permission to give write access
+	opts := &github.RepositoryAddCollaboratorOptions{
+		Permission: "push",
+	}
+
+	_, _, err := c.client.Repositories.AddCollaborator(ctx, owner, repo, username, opts)
+	if err != nil {
+		return fmt.Errorf("failed to add collaborator: %w", err)
+	}
+
+	return nil
+}
