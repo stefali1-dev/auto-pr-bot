@@ -26,43 +26,6 @@ Send a POST request to the Lambda endpoint with the following JSON body:
 }
 ```
 
-### Request Fields
-
-- **`repositoryUrl`** (required): The full GitHub repository URL to contribute to
-  - Example: `"https://github.com/owner/repo"`
-
-- **`modificationPrompt`** (required): A description of what changes you want to make
-  - Example: `"Add error handling to the main function"`
-  - Example: `"Update README.md to include installation instructions"`
-
-- **`githubUsername`** (optional): A GitHub username to add as a collaborator to the fork
-  - If provided, the user will receive an invitation to collaborate on the fork
-  - Once accepted, they'll have write access to edit the PR and push changes
-  - If omitted, only the bot's account will have access to the fork
-
-### Response
-
-The Lambda returns immediately with a 202 Accepted status:
-
-```json
-{
-  "status": "processing",
-  "message": "Your request is being processed. Check CloudWatch logs for progress.",
-  "repository": "https://github.com/owner/repo"
-}
-```
-
-The actual processing happens asynchronously. Check CloudWatch logs for detailed progress and the final PR URL.
-
-## Requirements
-
-* [AWS CLI](https://aws.amazon.com/cli/) configured with appropriate permissions
-* [Docker installed](https://www.docker.com/community-edition)
-* [SAM CLI](https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/serverless-sam-cli-install.html)
-* [Go 1.23+](https://golang.org/doc/install)
-* GitHub Personal Access Token (with repo and workflow permissions)
-* OpenAI API Key
-
 ## Environment Variables
 
 Create an `env.json` file (see `env.json.example`) with:
@@ -111,26 +74,3 @@ sam deploy
 ```
 
 The deployment will output the API Gateway endpoint URL that you can use to invoke the Lambda function.
-
-## How It Works
-
-### Async Workflow
-
-The Lambda uses an async invocation pattern to handle long-running operations:
-
-1. **Sync Request** (from API Gateway): Detects the API Gateway call, invokes itself asynchronously, returns 202 Accepted immediately
-2. **Async Processing**: The self-invoked Lambda processes the repository, creates the PR, and logs all details to CloudWatch
-
-### Multi-Step LLM Process
-
-The bot uses OpenAI in multiple steps for intelligent code modification:
-
-1. **Analyze**: Examines the repository structure to determine which files to read
-2. **Read**: Reads the identified files (with smart truncation for large files)
-3. **Plan**: Determines which files need modification based on the prompt
-4. **Generate**: Creates complete modified file contents for each file
-5. **Apply**: Writes the changes, commits, and pushes to a new timestamped branch
-
-### Multiple PRs Support
-
-Each request creates a unique timestamped branch (`auto-pr-bot/<unix-timestamp>`), allowing multiple concurrent PRs per repository. The bot only closes PRs from the default branch, leaving feature-branch PRs independent.
