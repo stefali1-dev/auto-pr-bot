@@ -25,6 +25,12 @@ Resources:
           Properties:
             Path: /process
             Method: POST
+      Policies:
+        - Statement:
+          - Effect: Allow
+            Action:
+              - lambda:InvokeFunction
+            Resource: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${AWS::StackName}-AutoPRBotFunction-*'
       Environment:
         Variables:
           GITHUB_TOKEN: ""  # Will be overridden by env.json locally or Parameter Store in production

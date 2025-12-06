@@ -180,3 +180,13 @@ func (c *Client) ClosePullRequest(ctx context.Context, owner, repo string, prNum
 
 	return nil
 }
+
+// DeleteBranch deletes a branch from the repository
+func (c *Client) DeleteBranch(ctx context.Context, owner, repo, branch string) error {
+	ref := fmt.Sprintf("heads/%s", branch)
+	_, err := c.client.Git.DeleteRef(ctx, owner, repo, ref)
+	if err != nil {
+		return fmt.Errorf("failed to delete branch: %w", err)
+	}
+	return nil
+}

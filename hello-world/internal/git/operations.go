@@ -124,8 +124,39 @@ func WriteFile(filePath, content string) error {
 	return nil
 }
 
-// CommitAndPush commits changes and pushes to the remote repository
-func CommitAndPush(repoPath, commitMessage, token string) error {
+// ResetToUpstream resets the fork's main branch to match upstream
+func ResetToUpstream(repoPath, upstreamOwner, upstreamRepo, defaultBranch string) error {
+	// Add upstream remote if it doesn't exist
+	remoteURL := fmt.Sprintf("https://github.com/%s/%s.git", upstreamOwner, upstreamRepo)
+	addRemoteCmd := exec.Command("git", "-C", repoPath, "remote", "add", "upstream", remoteURL)
+	addRemoteCmd.CombinedOutput() // Ignore error if upstream already exists
+
+	// Fetch upstream
+	fetchCmd := exec.Command("git", "-C", repoPath, "fetch", "upstream", defaultBranch)
+	if output, err := fetchCmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("git fetch upstream failed: %w, output: %s", err, string(output))
+	}
+
+	// Reset to upstream
+	resetCmd := exec.Command("git", "-C", repoPath, "reset", "--hard", fmt.Sprintf("upstream/%s", defaultBranch))
+	if output, err := resetCmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("git reset failed: %w, output: %s", err, string(output))
+	}
+
+	return nil
+}
+
+// CreateAndCheckoutBranch creates a new branch and checks it out
+func CreateAndCheckoutBranch(repoPath, branchName string) error {
+	checkoutCmd := exec.Command("git", "-C", repoPath, "checkout", "-b", branchName)
+	if output, err := checkoutCmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("git checkout -b failed: %w, output: %s", err, string(output))
+	}
+	return nil
+}
+
+// CommitAndPush commits changes and pushes to the remote repository on a specific branch
+func CommitAndPush(repoPath, branchName, commitMessage, token string) error {
 	// Configure git user for the commit
 	configCmds := [][]string{
 		{"git", "-C", repoPath, "config", "user.name", "Auto PR Bot"},
@@ -162,8 +193,8 @@ func CommitAndPush(repoPath, commitMessage, token string) error {
 		return fmt.Errorf("git commit failed: %w, output: %s", err, string(output))
 	}
 
-	// Push changes
-	pushCmd := exec.Command("git", "-C", repoPath, "push")
+	// Push changes to the specific branch
+	pushCmd := exec.Command("git", "-C", repoPath, "push", "-u", "origin", branchName)
 	if output, err := pushCmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("git push failed: %w, output: %s", err, string(output))
 	}

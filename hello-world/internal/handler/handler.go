@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"strings"
+	"time"
 
 	"hello-world/internal/git"
 	"hello-world/internal/github"
@@ -14,6 +15,10 @@ import (
 	"hello-world/internal/openai"
 
 	"github.com/aws/aws-lambda-go/events"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/lambda"
+	"github.com/aws/aws-sdk-go-v2/service/lambda/types"
 )
 
 // Handler processes the Lambda request
@@ -58,13 +63,81 @@ func (h *Handler) Handle(ctx context.Context, request events.APIGatewayProxyRequ
 
 	log.Printf("Processing request for repository: %s, user: %s", req.RepositoryURL, req.GitHubUsername)
 
-	// Process the repository (no retry at this level - retries are handled in OpenAI client)
-	result, err := h.processRepository(ctx, &req)
-	if err != nil {
-		return h.errorResponse(500, fmt.Sprintf("Failed to process repository: %v", err))
+	// Check if this is a synchronous call from API Gateway
+	// API Gateway requests have RequestContext with a RequestId
+	// Async invocations will have empty RequestContext
+	if request.RequestContext.RequestID != "" {
+		log.Printf("Synchronous invocation detected - invoking async and returning immediately")
+
+		// Invoke this Lambda function asynchronously
+		if err := h.invokeAsync(ctx, request.Body); err != nil {
+			log.Printf("Failed to invoke async: %v", err)
+			return h.errorResponse(500, fmt.Sprintf("Failed to start processing: %v", err))
+		}
+
+		// Return 202 Accepted immediately
+		return events.APIGatewayProxyResponse{
+			StatusCode: 202,
+			Headers: map[string]string{
+				"Content-Type": "application/json",
+			},
+			Body: `{"status":"processing","message":"Your request is being processed. Check CloudWatch logs for progress.","repository":"` + req.RepositoryURL + `"}`,
+		}, nil
 	}
 
-	return h.successResponse(result)
+	// This is an async invocation - do the actual processing
+	log.Printf("Asynchronous invocation detected - processing repository")
+	result, err := h.processRepository(ctx, &req)
+	if err != nil {
+		log.Printf("ERROR: Failed to process repository: %v", err)
+		return events.APIGatewayProxyResponse{}, fmt.Errorf("failed to process repository: %w", err)
+	}
+
+	log.Printf("SUCCESS: %s", result)
+	return events.APIGatewayProxyResponse{}, nil
+}
+
+// invokeAsync invokes this Lambda function asynchronously
+func (h *Handler) invokeAsync(ctx context.Context, payload string) error {
+	functionName := os.Getenv("AWS_LAMBDA_FUNCTION_NAME")
+	if functionName == "" {
+		return fmt.Errorf("AWS_LAMBDA_FUNCTION_NAME not set")
+	}
+
+	// Load AWS config
+	cfg, err := config.LoadDefaultConfig(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to load AWS config: %w", err)
+	}
+
+	// Create Lambda client
+	lambdaClient := lambda.NewFromConfig(cfg)
+
+	// Create API Gateway event with empty RequestContext to signal async processing
+	asyncEvent := events.APIGatewayProxyRequest{
+		Body:           payload,
+		RequestContext: events.APIGatewayProxyRequestContext{}, // Empty context signals async
+	}
+
+	asyncPayload, err := json.Marshal(asyncEvent)
+	if err != nil {
+		return fmt.Errorf("failed to marshal async payload: %w", err)
+	}
+
+	// Invoke asynchronously
+	input := &lambda.InvokeInput{
+		FunctionName:   aws.String(functionName),
+		InvocationType: types.InvocationTypeEvent, // Event = async
+		Payload:        asyncPayload,
+	}
+
+	_, err = lambdaClient.Invoke(ctx, input)
+	if err != nil {
+		return fmt.Errorf("failed to invoke Lambda async: %w", err)
+	}
+
+	log.Printf("Successfully invoked Lambda asynchronously")
+	return nil
 }
 
 // processRepository handles the main business logic
@@ -116,6 +189,28 @@ func (h *Handler) processRepository(ctx context.Context, req *models.Request) (s
 	}()
 
 	log.Printf("Repository cloned to: %s", clonePath)
+
+	// Get the default branch before making changes
+	log.Printf("Getting default branch of upstream repository...")
+	defaultBranch, err := h.githubClient.GetDefaultBranch(ctx, owner, repo)
+	if err != nil {
+		return "", fmt.Errorf("failed to get default branch: %w", err)
+	}
+	log.Printf("Default branch: %s", defaultBranch)
+
+	// Reset fork's main branch to match upstream
+	log.Printf("Resetting fork to match upstream...")
+	if err := git.ResetToUpstream(clonePath, owner, repo, defaultBranch); err != nil {
+		return "", fmt.Errorf("failed to reset to upstream: %w", err)
+	}
+	log.Printf("Fork reset to upstream successfully")
+
+	// Create a new branch with timestamp
+	branchName := fmt.Sprintf("auto-pr-bot/%d", time.Now().Unix())
+	log.Printf("Creating new branch: %s", branchName)
+	if err := git.CreateAndCheckoutBranch(clonePath, branchName); err != nil {
+		return "", fmt.Errorf("failed to create branch: %w", err)
+	}
 
 	// List all files in the repository
 	log.Printf("Listing files in repository...")
@@ -206,10 +301,10 @@ func (h *Handler) processRepository(ctx context.Context, req *models.Request) (s
 		log.Printf("Wrote file: %s", filePath)
 	}
 
-	// Step 6: Commit and push changes
-	log.Printf("Step 6: Committing and pushing changes...")
+	// Step 6: Commit and push changes to the new branch
+	log.Printf("Step 6: Committing and pushing changes to branch %s...", branchName)
 	commitMessage := fmt.Sprintf("Auto PR: %s\n\n%s", req.ModificationPrompt, explanation)
-	err = git.CommitAndPush(clonePath, commitMessage, h.githubToken)
+	err = git.CommitAndPush(clonePath, branchName, commitMessage, h.githubToken)
 
 	// Check if there are no changes to commit
 	hasChanges := true
@@ -221,19 +316,14 @@ func (h *Handler) processRepository(ctx context.Context, req *models.Request) (s
 			return "", fmt.Errorf("failed to commit and push: %w", err)
 		}
 	} else {
-		log.Printf("Changes committed and pushed successfully")
+		log.Printf("Changes committed and pushed successfully to branch %s", branchName)
 	}
 
-	// Step 7: Get the default branch of the upstream repository
-	log.Printf("Step 7: Getting default branch of upstream repository...")
-	defaultBranch, err := h.githubClient.GetDefaultBranch(ctx, owner, repo)
-	if err != nil {
-		return "", fmt.Errorf("failed to get default branch: %w", err)
-	}
-	log.Printf("Default branch: %s", defaultBranch)
-
-	// Step 8: Check for and close existing PRs from this bot
-	log.Printf("Step 8: Checking for existing PRs from bot...")
+	// Step 7: Check for and close existing PRs from the default branch
+	// Note: We ONLY close PRs from the default branch. PRs from feature branches
+	// (auto-pr-bot/<timestamp>) are left open, allowing multiple concurrent PRs per repo.
+	// This gives users flexibility to work on multiple independent changes.
+	log.Printf("Step 7: Checking for existing PRs from bot (default branch: %s)...", defaultBranch)
 	existingPRs, err := h.githubClient.ListOpenPullRequests(ctx, owner, repo, user.GetLogin(), defaultBranch)
 	if err != nil {
 		log.Printf("Warning: failed to list existing PRs: %v", err)
@@ -255,14 +345,26 @@ func (h *Handler) processRepository(ctx context.Context, req *models.Request) (s
 			return response, nil
 		}
 
-		// Close existing PRs since we have new changes
-		log.Printf("Found %d existing PR(s) from bot, closing them...", len(existingPRs))
+		// Close existing default-branch PRs and delete their branches
+		log.Printf("Found %d existing default-branch PR(s), closing them and deleting branches...", len(existingPRs))
 		for _, existingPR := range existingPRs {
+			oldBranch := existingPR.Head.GetRef()
 			closeComment := fmt.Sprintf("Closing this PR to create a new one with updated changes.\n\nNew modification request: %s", req.ModificationPrompt)
 			if err := h.githubClient.ClosePullRequest(ctx, owner, repo, existingPR.GetNumber(), closeComment); err != nil {
 				log.Printf("Warning: failed to close PR #%d: %v", existingPR.GetNumber(), err)
 			} else {
 				log.Printf("Closed PR #%d", existingPR.GetNumber())
+			}
+
+			// Delete the old branch from fork (skip if it's the default branch)
+			if oldBranch != defaultBranch {
+				if err := h.githubClient.DeleteBranch(ctx, user.GetLogin(), repo, oldBranch); err != nil {
+					log.Printf("Warning: failed to delete branch %s: %v", oldBranch, err)
+				} else {
+					log.Printf("Deleted branch %s", oldBranch)
+				}
+			} else {
+				log.Printf("Skipping deletion of default branch %s", oldBranch)
 			}
 		}
 	} else if !hasChanges {
@@ -270,8 +372,8 @@ func (h *Handler) processRepository(ctx context.Context, req *models.Request) (s
 		return "", fmt.Errorf("no changes to commit and no existing PR found")
 	}
 
-	// Step 9: Create Pull Request
-	log.Printf("Step 9: Creating pull request...")
+	// Step 8: Create Pull Request from the new branch
+	log.Printf("Step 8: Creating pull request from branch %s...", branchName)
 	prTitle := fmt.Sprintf("Auto PR: %s", req.ModificationPrompt)
 	prBody := fmt.Sprintf(`This is an automated pull request.
 
@@ -294,16 +396,14 @@ func (h *Handler) processRepository(ctx context.Context, req *models.Request) (s
 		user.GetLogin(), // fork owner
 		prTitle,
 		prBody,
-		defaultBranch, // head branch (from fork)
-		defaultBranch, // base branch (to upstream)
+		branchName,    // head branch (the new timestamp branch)
+		defaultBranch, // base branch (upstream's default branch)
 	)
 	if err != nil {
 		return "", fmt.Errorf("failed to create pull request: %w", err)
 	}
 
-	log.Printf("Pull request created: %s", pr.GetHTMLURL())
-
-	// Print summary to CloudWatch
+	log.Printf("Pull request created: %s", pr.GetHTMLURL()) // Print summary to CloudWatch
 	log.Printf("\n=== MODIFICATION SUMMARY ===")
 	log.Printf("Repository: %s/%s", owner, repo)
 	log.Printf("Fork: %s", fork.GetHTMLURL())
