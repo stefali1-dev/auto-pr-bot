@@ -13,19 +13,22 @@ import (
 	"hello-world/internal/github"
 	"hello-world/internal/models"
 	"hello-world/internal/openai"
+	"hello-world/internal/status"
 
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/lambda"
 	"github.com/aws/aws-sdk-go-v2/service/lambda/types"
+	"github.com/google/uuid"
 )
 
 // Handler processes the Lambda request
 type Handler struct {
-	githubClient *github.Client
-	openaiClient *openai.Client
-	githubToken  string
+	githubClient  *github.Client
+	openaiClient  *openai.Client
+	githubToken   string
+	statusTracker *status.Tracker
 }
 
 // New creates a new handler instance
@@ -40,10 +43,16 @@ func New() (*Handler, error) {
 		return nil, fmt.Errorf("failed to create OpenAI client: %w", err)
 	}
 
+	statusTracker, err := status.NewTracker(context.Background())
+	if err != nil {
+		return nil, fmt.Errorf("failed to create status tracker: %w", err)
+	}
+
 	return &Handler{
-		githubClient: github.NewClient(githubToken),
-		openaiClient: openaiClient,
-		githubToken:  githubToken,
+		githubClient:  github.NewClient(githubToken),
+		openaiClient:  openaiClient,
+		githubToken:   githubToken,
+		statusTracker: statusTracker,
 	}, nil
 }
 
@@ -69,13 +78,37 @@ func (h *Handler) Handle(ctx context.Context, request events.APIGatewayProxyRequ
 	if request.RequestContext.RequestID != "" {
 		log.Printf("Synchronous invocation detected - invoking async and returning immediately")
 
+		// Generate unique request ID
+		requestID := uuid.New().String()
+		log.Printf("Generated request ID: %s", requestID)
+
+		// Create initial status record
+		err := h.statusTracker.Update(ctx, requestID, status.StatusPending, "Request received, starting processing...", 0, req.RepositoryURL)
+		if err != nil {
+			log.Printf("Warning: Failed to create initial status: %v", err)
+		}
+
+		// Add requestID to the request for async processing
+		reqWithID := models.RequestWithID{
+			Request:   req,
+			RequestID: requestID,
+		}
+
+		requestBodyWithID, err := json.Marshal(reqWithID)
+		if err != nil {
+			log.Printf("Failed to marshal request with ID: %v", err)
+			return h.errorResponse(500, "Failed to start processing")
+		}
+
 		// Invoke this Lambda function asynchronously
-		if err := h.invokeAsync(ctx, request.Body); err != nil {
+		if err := h.invokeAsync(ctx, string(requestBodyWithID)); err != nil {
 			log.Printf("Failed to invoke async: %v", err)
+			h.statusTracker.Error(ctx, requestID, fmt.Sprintf("Failed to start async processing: %v", err), req.RepositoryURL)
 			return h.errorResponse(500, fmt.Sprintf("Failed to start processing: %v", err))
 		}
 
-		// Return 202 Accepted immediately
+		// Return 202 Accepted immediately with requestId
+		responseBody := fmt.Sprintf(`{"status":"processing","message":"Your request is being processed.","repository":"%s","requestId":"%s"}`, req.RepositoryURL, requestID)
 		return events.APIGatewayProxyResponse{
 			StatusCode: 202,
 			Headers: map[string]string{
@@ -84,15 +117,30 @@ func (h *Handler) Handle(ctx context.Context, request events.APIGatewayProxyRequ
 				"Access-Control-Allow-Methods": "POST, OPTIONS",
 				"Access-Control-Allow-Headers": "Content-Type",
 			},
-			Body: `{"status":"processing","message":"Your request is being processed. Check CloudWatch logs for progress.","repository":"` + req.RepositoryURL + `"}`,
+			Body: responseBody,
 		}, nil
 	}
 
 	// This is an async invocation - do the actual processing
 	log.Printf("Asynchronous invocation detected - processing repository")
-	result, err := h.processRepository(ctx, &req)
+
+	// Parse the request to extract requestID
+	var reqWithID models.RequestWithID
+	if err := json.Unmarshal([]byte(request.Body), &reqWithID); err != nil {
+		log.Printf("ERROR: Failed to parse request with ID: %v", err)
+		return events.APIGatewayProxyResponse{}, fmt.Errorf("failed to parse request: %w", err)
+	}
+
+	requestID := reqWithID.RequestID
+	if requestID == "" {
+		log.Printf("Warning: No requestID found in async invocation")
+		requestID = uuid.New().String()
+	}
+
+	result, err := h.processRepository(ctx, &reqWithID.Request, requestID)
 	if err != nil {
 		log.Printf("ERROR: Failed to process repository: %v", err)
+		h.statusTracker.Error(ctx, requestID, err.Error(), reqWithID.RepositoryURL)
 		return events.APIGatewayProxyResponse{}, fmt.Errorf("failed to process repository: %w", err)
 	}
 
@@ -144,7 +192,7 @@ func (h *Handler) invokeAsync(ctx context.Context, payload string) error {
 }
 
 // processRepository handles the main business logic
-func (h *Handler) processRepository(ctx context.Context, req *models.Request) (string, error) {
+func (h *Handler) processRepository(ctx context.Context, req *models.Request, requestID string) (string, error) {
 	// Parse repository URL
 	owner, repo, err := github.ParseRepoURL(req.RepositoryURL)
 	if err != nil {
@@ -153,7 +201,8 @@ func (h *Handler) processRepository(ctx context.Context, req *models.Request) (s
 
 	log.Printf("Parsed repository: owner=%s, repo=%s", owner, repo)
 
-	// Fork the repository
+	// Step 1: Fork the repository
+	h.statusTracker.Update(ctx, requestID, status.StatusForking, "Forking repository...", 1, req.RepositoryURL)
 	log.Printf("Forking repository %s/%s...", owner, repo)
 	fork, err := h.githubClient.ForkRepository(ctx, owner, repo)
 	if err != nil {
@@ -170,7 +219,8 @@ func (h *Handler) processRepository(ctx context.Context, req *models.Request) (s
 
 	log.Printf("Authenticated as: %s", user.GetLogin())
 
-	// Clone the forked repository
+	// Step 2: Clone the forked repository
+	h.statusTracker.Update(ctx, requestID, status.StatusCloning, "Cloning forked repository...", 2, req.RepositoryURL)
 	cloneOpts := git.CloneOptions{
 		URL:       fork.GetCloneURL(),
 		Directory: fmt.Sprintf("%s-%s", user.GetLogin(), repo),
@@ -224,7 +274,8 @@ func (h *Handler) processRepository(ctx context.Context, req *models.Request) (s
 
 	log.Printf("Repository file structure:\n%s", fileTree)
 
-	// Step 1: Call OpenAI to analyze which files to read
+	// Step 3: Call OpenAI to analyze which files to read
+	h.statusTracker.Update(ctx, requestID, status.StatusAnalyzing, "Analyzing repository with AI...", 3, req.RepositoryURL)
 	log.Printf("Step 1: Calling OpenAI to determine which files to read...")
 	history, filesToRead, err := h.openaiClient.AnalyzeRepositoryForFiles(ctx, fileTree, req.ModificationPrompt)
 	if err != nil {
@@ -262,6 +313,7 @@ func (h *Handler) processRepository(ctx context.Context, req *models.Request) (s
 	log.Printf("Explanation: %s", explanation)
 
 	// Step 4: Generate modified content for each file
+	h.statusTracker.Update(ctx, requestID, status.StatusModifying, "Generating code modifications with AI...", 4, req.RepositoryURL)
 	log.Printf("Step 4: Generating modified file contents...")
 	modifiedFiles := make(map[string]string)
 	for _, filePath := range filesToModify {
@@ -305,6 +357,7 @@ func (h *Handler) processRepository(ctx context.Context, req *models.Request) (s
 	}
 
 	// Step 6: Commit and push changes to the new branch
+	h.statusTracker.Update(ctx, requestID, status.StatusCommitting, "Committing and pushing changes...", 5, req.RepositoryURL)
 	log.Printf("Step 6: Committing and pushing changes to branch %s...", branchName)
 	commitMessage := fmt.Sprintf("Auto PR: %s\n\n%s", req.ModificationPrompt, explanation)
 	err = git.CommitAndPush(clonePath, branchName, commitMessage, h.githubToken)
@@ -376,6 +429,7 @@ func (h *Handler) processRepository(ctx context.Context, req *models.Request) (s
 	}
 
 	// Step 8: Create Pull Request from the new branch
+	h.statusTracker.Update(ctx, requestID, status.StatusCreatingPR, "Creating pull request...", 6, req.RepositoryURL)
 	log.Printf("Step 8: Creating pull request from branch %s...", branchName)
 	prTitle := fmt.Sprintf("Auto PR: %s", req.ModificationPrompt)
 	prBody := fmt.Sprintf(`This is an automated pull request.
@@ -407,6 +461,9 @@ func (h *Handler) processRepository(ctx context.Context, req *models.Request) (s
 	}
 
 	log.Printf("Pull request created: %s", pr.GetHTMLURL())
+
+	// Mark as completed in status tracker
+	h.statusTracker.Complete(ctx, requestID, pr.GetHTMLURL(), req.RepositoryURL)
 
 	// Step 9: Add GitHub user as collaborator to the fork if provided
 	if req.GitHubUsername != "" {

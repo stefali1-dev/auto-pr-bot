@@ -7,6 +7,12 @@ type Request struct {
 	ModificationPrompt string `json:"modificationPrompt"`
 }
 
+// RequestWithID extends Request with a unique request ID for tracking
+type RequestWithID struct {
+	Request   `json:",inline"`
+	RequestID string `json:"requestId"`
+}
+
 // Validate checks if the request has all required fields
 func (r *Request) Validate() error {
 	if r.RepositoryURL == "" {

@@ -13,6 +13,22 @@ Globals:
     LoggingConfig:
       LogFormat: JSON
 Resources:
+  # DynamoDB Table for Status Tracking
+  StatusTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: auto-pr-bot-status
+      AttributeDefinitions:
+        - AttributeName: requestId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: requestId
+          KeyType: HASH
+      BillingMode: PAY_PER_REQUEST
+      TimeToLiveSpecification:
+        Enabled: true
+        AttributeName: expiresAt
+
   AutoPRBotFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -32,10 +48,43 @@ Resources:
             Action:
               - lambda:InvokeFunction
             Resource: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${AWS::StackName}-AutoPRBotFunction-*'
+          - Effect: Allow
+            Action:
+              - dynamodb:PutItem
+              - dynamodb:UpdateItem
+            Resource: !GetAtt StatusTable.Arn
       Environment:
         Variables:
           GITHUB_TOKEN: ""  # Will be overridden by env.json locally or Parameter Store in production
           OPENAI_API_KEY: ""  # Will be overridden by env.json locally or Parameter Store in production
+          STATUS_TABLE_NAME: !Ref StatusTable
+    Metadata:
+      DockerTag: go1.x-v1
+      DockerContext: ./hello-world
+      Dockerfile: Dockerfile
+
+  StatusFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      PackageType: Image
+      Architectures:
+      - x86_64
+      Events:
+        GetStatus:
+          Type: Api
+          Properties:
+            Path: /status/{requestId}
+            Method: GET
+            RestApiId: !Ref AutoPRBotApi
+      Policies:
+        - Statement:
+          - Effect: Allow
+            Action:
+              - dynamodb:GetItem
+            Resource: !GetAtt StatusTable.Arn
+      Environment:
+        Variables:
+          STATUS_TABLE_NAME: !Ref StatusTable
     Metadata:
       DockerTag: go1.x-v1
       DockerContext: ./hello-world
@@ -46,7 +95,7 @@ Resources:
     Properties:
       StageName: Prod
       Cors:
-        AllowMethods: "'POST, OPTIONS'"
+        AllowMethods: "'GET, POST, OPTIONS'"
         AllowHeaders: "'Content-Type'"
         AllowOrigin: "'*'"
 
@@ -70,10 +119,22 @@ Outputs:
     Description: API Gateway endpoint URL for Auto PR Bot
     Value: !Sub "https://${AutoPRBotApi}.execute-api.${AWS::Region}.amazonaws.com/Prod/process"
     
+  StatusAPI:
+    Description: API Gateway endpoint URL for Status checks
+    Value: !Sub "https://${AutoPRBotApi}.execute-api.${AWS::Region}.amazonaws.com/Prod/status/{requestId}"
+    
   AutoPRBotFunction:
     Description: Auto PR Bot Lambda Function ARN
     Value: !GetAtt AutoPRBotFunction.Arn
+
+  StatusFunction:
+    Description: Status Lambda Function ARN
+    Value: !GetAtt StatusFunction.Arn
     
   AutoPRBotFunctionIamRole:
     Description: Implicit IAM Role created for Auto PR Bot function
     Value: !GetAtt AutoPRBotFunctionRole.Arn
+
+  StatusTable:
+    Description: DynamoDB table for status tracking
+    Value: !Ref StatusTable
