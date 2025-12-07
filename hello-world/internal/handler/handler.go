@@ -49,6 +49,18 @@ func New() (*Handler, error) {
 
 // Handle processes the incoming API Gateway request
 func (h *Handler) Handle(ctx context.Context, request events.APIGatewayProxyRequest) (events.APIGatewayProxyResponse, error) {
+	// Handle CORS preflight OPTIONS request
+	if request.HTTPMethod == "OPTIONS" {
+		return events.APIGatewayProxyResponse{
+			StatusCode: 200,
+			Headers: map[string]string{
+				"Access-Control-Allow-Origin":  "*",
+				"Access-Control-Allow-Methods": "POST, OPTIONS",
+				"Access-Control-Allow-Headers": "Content-Type",
+			},
+		}, nil
+	}
+
 	log.Printf("Received request: %s", request.Body)
 
 	// Parse and validate request
@@ -79,7 +91,10 @@ func (h *Handler) Handle(ctx context.Context, request events.APIGatewayProxyRequ
 		return events.APIGatewayProxyResponse{
 			StatusCode: 202,
 			Headers: map[string]string{
-				"Content-Type": "application/json",
+				"Content-Type":                 "application/json",
+				"Access-Control-Allow-Origin":  "*",
+				"Access-Control-Allow-Methods": "POST, OPTIONS",
+				"Access-Control-Allow-Headers": "Content-Type",
 			},
 			Body: `{"status":"processing","message":"Your request is being processed. Check CloudWatch logs for progress.","repository":"` + req.RepositoryURL + `"}`,
 		}, nil
@@ -507,7 +522,10 @@ func (h *Handler) errorResponse(statusCode int, message string) (events.APIGatew
 	return events.APIGatewayProxyResponse{
 		StatusCode: statusCode,
 		Headers: map[string]string{
-			"Content-Type": "application/json",
+			"Content-Type":                 "application/json",
+			"Access-Control-Allow-Origin":  "*",
+			"Access-Control-Allow-Methods": "POST, OPTIONS",
+			"Access-Control-Allow-Headers": "Content-Type",
 		},
 		Body: fmt.Sprintf(`{"error": "%s"}`, message),
 	}, nil
