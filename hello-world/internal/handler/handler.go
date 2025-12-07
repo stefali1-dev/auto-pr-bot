@@ -49,18 +49,6 @@ func New() (*Handler, error) {
 
 // Handle processes the incoming API Gateway request
 func (h *Handler) Handle(ctx context.Context, request events.APIGatewayProxyRequest) (events.APIGatewayProxyResponse, error) {
-	// Handle CORS preflight OPTIONS request
-	if request.HTTPMethod == "OPTIONS" {
-		return events.APIGatewayProxyResponse{
-			StatusCode: 200,
-			Headers: map[string]string{
-				"Access-Control-Allow-Origin":  "*",
-				"Access-Control-Allow-Methods": "POST, OPTIONS",
-				"Access-Control-Allow-Headers": "Content-Type",
-			},
-		}, nil
-	}
-
 	log.Printf("Received request: %s", request.Body)
 
 	// Parse and validate request

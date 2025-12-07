@@ -25,6 +25,7 @@ Resources:
           Properties:
             Path: /process
             Method: POST
+            RestApiId: !Ref AutoPRBotApi
       Policies:
         - Statement:
           - Effect: Allow
@@ -39,6 +40,15 @@ Resources:
       DockerTag: go1.x-v1
       DockerContext: ./hello-world
       Dockerfile: Dockerfile
+  
+  AutoPRBotApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName: Prod
+      Cors:
+        AllowMethods: "'POST, OPTIONS'"
+        AllowHeaders: "'Content-Type'"
+        AllowOrigin: "'*'"
 
   ApplicationResourceGroup:
     Type: AWS::ResourceGroups::Group
@@ -58,7 +68,7 @@ Resources:
 Outputs:
   AutoPRBotAPI:
     Description: API Gateway endpoint URL for Auto PR Bot
-    Value: !Sub "https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/Prod/process"
+    Value: !Sub "https://${AutoPRBotApi}.execute-api.${AWS::Region}.amazonaws.com/Prod/process"
     
   AutoPRBotFunction:
     Description: Auto PR Bot Lambda Function ARN
