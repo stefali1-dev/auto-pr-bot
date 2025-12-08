@@ -184,8 +184,14 @@ Now that you have read the necessary files, determine which files need to be mod
 Return ONLY a JSON object with this structure:
 {
   "filesToModify": ["path/to/file1.ext", "path/to/file2.ext"],
-  "explanation": "Brief explanation of what changes are needed"
-}`, contentBuilder.String(), modificationPrompt)
+  "explanation": "Brief summary of the actual changes that were made to the code"
+}
+
+IMPORTANT for the "explanation" field:
+- Write in PAST TENSE
+- Describe WHAT was changed
+- Focus on the actual code changes that will appear in the PR
+- Keep it concise and user-facing - this will be shown in the PR description`, contentBuilder.String(), modificationPrompt)
 
 	history.AddMessage("user", userPrompt)
 
