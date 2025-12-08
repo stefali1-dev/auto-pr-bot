@@ -140,7 +140,11 @@ func (h *Handler) Handle(ctx context.Context, request events.APIGatewayProxyRequ
 	result, err := h.processRepository(ctx, &reqWithID.Request, requestID)
 	if err != nil {
 		log.Printf("ERROR: Failed to process repository: %v", err)
-		h.statusTracker.Error(ctx, requestID, err.Error(), reqWithID.RepositoryURL)
+		// Don't overwrite rejected status - it's already set with helpful feedback
+		// Only update to error status if it's not a validation rejection
+		if !strings.Contains(err.Error(), "prompt validation failed") {
+			h.statusTracker.Error(ctx, requestID, err.Error(), reqWithID.RepositoryURL)
+		}
 		return events.APIGatewayProxyResponse{}, fmt.Errorf("failed to process repository: %w", err)
 	}
 
@@ -200,6 +204,21 @@ func (h *Handler) processRepository(ctx context.Context, req *models.Request, re
 	}
 
 	log.Printf("Parsed repository: owner=%s, repo=%s", owner, repo)
+
+	// Step 0: Validate the modification prompt
+	h.statusTracker.Update(ctx, requestID, status.StatusValidating, "Validating modification request...", 0, req.RepositoryURL)
+	log.Printf("Validating modification prompt...")
+	isValid, reason, err := h.openaiClient.ValidatePrompt(ctx, req.ModificationPrompt)
+	if err != nil {
+		log.Printf("Warning: Failed to validate prompt: %v. Continuing anyway.", err)
+		// Don't fail the entire process if validation fails - continue with the request
+	} else if !isValid {
+		log.Printf("Prompt validation failed: %s", reason)
+		h.statusTracker.Reject(ctx, requestID, reason, req.RepositoryURL)
+		return "", fmt.Errorf("prompt validation failed: %s", reason)
+	} else {
+		log.Printf("Prompt validation passed: %s", reason)
+	}
 
 	// Step 1: Fork the repository
 	h.statusTracker.Update(ctx, requestID, status.StatusForking, "Forking repository...", 1, req.RepositoryURL)

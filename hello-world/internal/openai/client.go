@@ -50,6 +50,12 @@ type FilesToModifyResponse struct {
 	Explanation   string   `json:"explanation"`
 }
 
+// PromptValidationResponse represents the validation result from the LLM
+type PromptValidationResponse struct {
+	IsValid bool   `json:"isValid"`
+	Reason  string `json:"reason"`
+}
+
 // FileModificationResponse represents the modified file content from the third LLM call
 type FileModificationResponse struct {
 	FilePath        string `json:"filePath"`
@@ -102,6 +108,67 @@ type ChatCompletionResponse struct {
 		CompletionTokens int `json:"completion_tokens"`
 		TotalTokens      int `json:"total_tokens"`
 	} `json:"usage"`
+}
+
+// ValidatePrompt checks if the modification prompt is clear, specific, and actionable
+func (c *Client) ValidatePrompt(ctx context.Context, modificationPrompt string) (bool, string, error) {
+	systemPrompt := `You are an expert at evaluating software modification requests. Your task is to determine if a modification prompt has enough information to create a meaningful pull request.
+
+Be LENIENT - accept prompts that give a reasonable direction, even if not perfectly detailed. An AI can figure out minor details like exact file paths, formatting, or placement.
+
+A VALID prompt should have:
+- A clear intent or goal (what needs to be changed/added/removed)
+- Enough context to understand the type of modification
+- A reasonable scope (not asking for impossible things)
+
+INVALID prompts are ONLY those that are:
+- Extremely vague with no clear direction (e.g., "improve the code", "make it better", "fix stuff")
+- Completely unclear about what to modify (e.g., "do something")
+- Asking for impossible or nonsensical things (e.g., "delete all code and replace with unicorns")
+- Too broad without any specifics (e.g., "refactor everything", "rewrite the entire app")
+
+Return ONLY a JSON object with this structure:
+{
+  "isValid": true/false,
+  "reason": "Brief explanation of why the prompt is valid or what improvements are needed"
+}
+
+If valid, keep the reason brief (e.g., "Clear intent provided").
+If invalid, be constructive and brief about what's missing.`
+
+	userPrompt := fmt.Sprintf(`Evaluate this modification request:
+
+"%s"
+
+Is this prompt clear and specific enough to create a meaningful pull request?`, modificationPrompt)
+
+	reqBody := ChatCompletionRequest{
+		Model: gpt5Mini,
+		Messages: []Message{
+			{Role: "system", Content: systemPrompt},
+			{Role: "user", Content: userPrompt},
+		},
+		MaxCompletionTokens: 500,
+		ResponseFormat: &struct {
+			Type       string                 `json:"type"`
+			JSONSchema map[string]interface{} `json:"json_schema,omitempty"`
+		}{
+			Type: "json_object",
+		},
+	}
+
+	response, err := c.makeAPICall(ctx, reqBody)
+	if err != nil {
+		return false, "", fmt.Errorf("failed to validate prompt: %w", err)
+	}
+
+	// Parse the JSON response
+	var validation PromptValidationResponse
+	if err := json.Unmarshal([]byte(response), &validation); err != nil {
+		return false, "", fmt.Errorf("failed to parse validation response: %w", err)
+	}
+
+	return validation.IsValid, validation.Reason, nil
 }
 
 // AnalyzeRepositoryForFiles asks the LLM which files it needs to read to understand the modification request

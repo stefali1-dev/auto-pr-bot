@@ -20,6 +20,7 @@ type Status string
 
 const (
 	StatusPending    Status = "pending"
+	StatusValidating Status = "validating"
 	StatusForking    Status = "forking"
 	StatusCloning    Status = "cloning"
 	StatusAnalyzing  Status = "analyzing"
@@ -27,6 +28,7 @@ const (
 	StatusCommitting Status = "committing"
 	StatusCreatingPR Status = "creating_pr"
 	StatusCompleted  Status = "completed"
+	StatusRejected   Status = "rejected"
 	StatusError      Status = "error"
 )
 
@@ -133,6 +135,38 @@ func (t *Tracker) Complete(ctx context.Context, requestID string, prURL string, 
 	return nil
 }
 
+// Marks a request as rejected due to invalid/unclear prompt
+func (t *Tracker) Reject(ctx context.Context, requestID string, reason string, repository string) error {
+	record := StatusRecord{
+		RequestID:    requestID,
+		Status:       string(StatusRejected),
+		Message:      "Request rejected: prompt needs improvement",
+		ErrorDetails: reason,
+		Timestamp:    time.Now().Unix(),
+		Repository:   repository,
+		ExpiresAt:    time.Now().Add(48 * time.Hour).Unix(),
+	}
+
+	item, err := attributevalue.MarshalMap(record)
+	if err != nil {
+		return fmt.Errorf("failed to marshal record: %w", err)
+	}
+
+	input := &dynamodb.PutItemInput{
+		TableName: aws.String(t.tableName),
+		Item:      item,
+	}
+
+	_, err = t.client.PutItem(ctx, input)
+	if err != nil {
+		log.Printf("Warning: Failed to update rejected status in DynamoDB: %v", err)
+		return nil
+	}
+
+	log.Printf("Status rejected: %s - %s", requestID, reason)
+	return nil
+}
+
 // Marks a request as failed
 func (t *Tracker) Error(ctx context.Context, requestID string, errorMsg string, repository string) error {
 	record := StatusRecord{
@@ -196,6 +230,7 @@ func (t *Tracker) Get(ctx context.Context, requestID string) (*StatusRecord, err
 func ParseStepFromStatus(status Status) int {
 	steps := map[Status]int{
 		StatusPending:    0,
+		StatusValidating: 0,
 		StatusForking:    1,
 		StatusCloning:    2,
 		StatusAnalyzing:  3,
@@ -203,6 +238,7 @@ func ParseStepFromStatus(status Status) int {
 		StatusCommitting: 5,
 		StatusCreatingPR: 6,
 		StatusCompleted:  9,
+		StatusRejected:   -1,
 		StatusError:      -1,
 	}
 
