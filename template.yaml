@@ -13,7 +13,7 @@ Globals:
     LoggingConfig:
       LogFormat: JSON
 Resources:
-  # DynamoDB Table for Status Tracking
+  # DynamoDB Table for Status Tracking and Rate Limiting
   StatusTable:
     Type: AWS::DynamoDB::Table
     Properties:
@@ -21,9 +21,22 @@ Resources:
       AttributeDefinitions:
         - AttributeName: requestId
           AttributeType: S
+        - AttributeName: ipAddress
+          AttributeType: S
+        - AttributeName: timestamp
+          AttributeType: N
       KeySchema:
         - AttributeName: requestId
           KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: IpAddressIndex
+          KeySchema:
+            - AttributeName: ipAddress
+              KeyType: HASH
+            - AttributeName: timestamp
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
       BillingMode: PAY_PER_REQUEST
       TimeToLiveSpecification:
         Enabled: true
@@ -52,7 +65,10 @@ Resources:
             Action:
               - dynamodb:PutItem
               - dynamodb:UpdateItem
-            Resource: !GetAtt StatusTable.Arn
+              - dynamodb:Query
+            Resource: 
+              - !GetAtt StatusTable.Arn
+              - !Sub '${StatusTable.Arn}/index/*'
       Environment:
         Variables:
           GITHUB_TOKEN: ""  # Will be overridden by env.json locally or Parameter Store in production

@@ -13,6 +13,7 @@ import (
 	"hello-world/internal/github"
 	"hello-world/internal/models"
 	"hello-world/internal/openai"
+	"hello-world/internal/ratelimit"
 	"hello-world/internal/status"
 
 	"github.com/aws/aws-lambda-go/events"
@@ -29,6 +30,7 @@ type Handler struct {
 	openaiClient  *openai.Client
 	githubToken   string
 	statusTracker *status.Tracker
+	rateLimiter   *ratelimit.Limiter
 }
 
 // New creates a new handler instance
@@ -48,11 +50,17 @@ func New() (*Handler, error) {
 		return nil, fmt.Errorf("failed to create status tracker: %w", err)
 	}
 
+	rateLimiter, err := ratelimit.NewLimiter(context.Background())
+	if err != nil {
+		return nil, fmt.Errorf("failed to create rate limiter: %w", err)
+	}
+
 	return &Handler{
 		githubClient:  github.NewClient(githubToken),
 		openaiClient:  openaiClient,
 		githubToken:   githubToken,
 		statusTracker: statusTracker,
+		rateLimiter:   rateLimiter,
 	}, nil
 }
 
@@ -78,13 +86,40 @@ func (h *Handler) Handle(ctx context.Context, request events.APIGatewayProxyRequ
 	if request.RequestContext.RequestID != "" {
 		log.Printf("Synchronous invocation detected - invoking async and returning immediately")
 
+		// Get IP address from request
+		ipAddress := request.RequestContext.Identity.SourceIP
+		if ipAddress == "" {
+			ipAddress = "unknown"
+		}
+		log.Printf("Request from IP: %s", ipAddress)
+
+		// Check rate limit
+		rateLimitResult, err := h.rateLimiter.CheckRateLimit(ctx, ipAddress)
+		if err != nil {
+			log.Printf("Warning: Failed to check rate limit: %v", err)
+			// Continue processing even if rate limit check fails
+		} else if !rateLimitResult.Allowed {
+			log.Printf("Rate limit exceeded for IP %s: %d/%d requests used", ipAddress, rateLimitResult.RequestsUsed, rateLimitResult.RequestsLimit)
+			nextAvailableStr := rateLimitResult.NextAvailable.Format("3:04pm MST")
+			errorMsg := fmt.Sprintf("Rate limit: %d requests per hour. You've used %d/%d. Next available: %s",
+				rateLimitResult.RequestsLimit,
+				rateLimitResult.RequestsUsed,
+				rateLimitResult.RequestsLimit,
+				nextAvailableStr)
+			return h.errorResponse(429, errorMsg)
+		}
+
 		// Generate unique request ID
 		requestID := uuid.New().String()
 		log.Printf("Generated request ID: %s", requestID)
 
+		// Record this request for rate limiting
+		if err := h.rateLimiter.RecordRequest(ctx, ipAddress, requestID); err != nil {
+			log.Printf("Warning: Failed to record rate limit: %v", err)
+		}
+
 		// Create initial status record
-		err := h.statusTracker.Update(ctx, requestID, status.StatusPending, "Request received, starting processing...", 0, req.RepositoryURL)
-		if err != nil {
+		if err = h.statusTracker.Update(ctx, requestID, status.StatusPending, "Request received, starting processing...", 0, req.RepositoryURL); err != nil {
 			log.Printf("Warning: Failed to create initial status: %v", err)
 		}
 
@@ -103,6 +138,15 @@ func (h *Handler) Handle(ctx context.Context, request events.APIGatewayProxyRequ
 		// Invoke this Lambda function asynchronously
 		if err := h.invokeAsync(ctx, string(requestBodyWithID)); err != nil {
 			log.Printf("Failed to invoke async: %v", err)
+
+			// Check if it's a concurrency limit error
+			if strings.Contains(err.Error(), "ReservedConcurrentExecutions") ||
+				strings.Contains(err.Error(), "TooManyRequestsException") ||
+				strings.Contains(err.Error(), "Rate exceeded") {
+				log.Printf("Concurrency limit reached")
+				return h.errorResponse(503, "Bot is currently at capacity processing other requests. Please try again in a few minutes.")
+			}
+
 			h.statusTracker.Error(ctx, requestID, fmt.Sprintf("Failed to start async processing: %v", err), req.RepositoryURL)
 			return h.errorResponse(500, fmt.Sprintf("Failed to start processing: %v", err))
 		}
