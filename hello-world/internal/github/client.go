@@ -9,13 +9,11 @@ import (
 	"github.com/google/go-github/v57/github"
 )
 
-// Client wraps the GitHub API client
 type Client struct {
 	client *github.Client
 	token  string
 }
 
-// NewClient creates a new GitHub client with authentication
 func NewClient(token string) *Client {
 	// Create an HTTP client with authentication header
 	httpClient := &http.Client{
@@ -31,7 +29,6 @@ func NewClient(token string) *Client {
 	}
 }
 
-// authTransport adds the GitHub token to each request
 type authTransport struct {
 	token string
 	base  http.RoundTripper
@@ -40,7 +37,8 @@ type authTransport struct {
 func (t *authTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	req.Header.Set("Authorization", "Bearer "+t.token)
 	return t.base.RoundTrip(req)
-} // ParseRepoURL extracts owner and repo name from GitHub URL
+}
+
 // Example: https://github.com/owner/repo -> (owner, repo, nil)
 func ParseRepoURL(repoURL string) (string, string, error) {
 	// Remove trailing slashes
@@ -59,7 +57,7 @@ func ParseRepoURL(repoURL string) (string, string, error) {
 	return parts[0], parts[1], nil
 }
 
-// ForkRepository creates a fork of the specified repository or returns existing fork
+// Reuses existing fork if present to avoid creating duplicates
 func (c *Client) ForkRepository(ctx context.Context, owner, repo string) (*github.Repository, error) {
 	// Try to get authenticated user first
 	user, _, err := c.client.Users.Get(ctx, "")
@@ -94,7 +92,6 @@ func (c *Client) ForkRepository(ctx context.Context, owner, repo string) (*githu
 	return existingFork, nil
 }
 
-// GetAuthenticatedUser returns the currently authenticated user
 func (c *Client) GetAuthenticatedUser(ctx context.Context) (*github.User, error) {
 	user, _, err := c.client.Users.Get(ctx, "")
 	if err != nil {
@@ -104,7 +101,6 @@ func (c *Client) GetAuthenticatedUser(ctx context.Context) (*github.User, error)
 	return user, nil
 }
 
-// CreatePullRequest creates a pull request from the fork to the upstream repository
 func (c *Client) CreatePullRequest(ctx context.Context, upstreamOwner, upstreamRepo, forkOwner, title, body, headBranch, baseBranch string) (*github.PullRequest, error) {
 	// The head should be in format "forkOwner:branch"
 	head := fmt.Sprintf("%s:%s", forkOwner, headBranch)
@@ -124,7 +120,6 @@ func (c *Client) CreatePullRequest(ctx context.Context, upstreamOwner, upstreamR
 	return pr, nil
 }
 
-// GetDefaultBranch retrieves the default branch of a repository
 func (c *Client) GetDefaultBranch(ctx context.Context, owner, repo string) (string, error) {
 	repository, _, err := c.client.Repositories.Get(ctx, owner, repo)
 	if err != nil {
@@ -154,7 +149,6 @@ func (c *Client) ListOpenPullRequests(ctx context.Context, upstreamOwner, upstre
 	return prs, nil
 }
 
-// ClosePullRequest closes a pull request with a comment
 func (c *Client) ClosePullRequest(ctx context.Context, owner, repo string, prNumber int, comment string) error {
 	// Add a comment explaining the closure
 	if comment != "" {
@@ -181,7 +175,6 @@ func (c *Client) ClosePullRequest(ctx context.Context, owner, repo string, prNum
 	return nil
 }
 
-// DeleteBranch deletes a branch from the repository
 func (c *Client) DeleteBranch(ctx context.Context, owner, repo, branch string) error {
 	ref := fmt.Sprintf("heads/%s", branch)
 	_, err := c.client.Git.DeleteRef(ctx, owner, repo, ref)
@@ -191,8 +184,7 @@ func (c *Client) DeleteBranch(ctx context.Context, owner, repo, branch string) e
 	return nil
 }
 
-// AddCollaborator adds a collaborator to a repository, giving them write access
-// This allows the user to push directly to the fork and edit PR branches
+// Grants "push" permission, allowing user to edit PR branches directly
 func (c *Client) AddCollaborator(ctx context.Context, owner, repo, username string) error {
 	// Use "push" permission to give write access
 	opts := &github.RepositoryAddCollaboratorOptions{

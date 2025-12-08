@@ -11,7 +11,7 @@ import (
 	"github.com/aws/aws-lambda-go/lambda"
 )
 
-// lambdaHandler is the entry point for the Lambda function
+// Entry point for the Lambda function
 func lambdaHandler(ctx context.Context, request events.APIGatewayProxyRequest) (events.APIGatewayProxyResponse, error) {
 	// Route based on the path
 	path := request.Path

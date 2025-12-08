@@ -24,7 +24,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// Handler processes the Lambda request
 type Handler struct {
 	githubClient  *github.Client
 	openaiClient  *openai.Client
@@ -33,7 +32,6 @@ type Handler struct {
 	rateLimiter   *ratelimit.Limiter
 }
 
-// New creates a new handler instance
 func New() (*Handler, error) {
 	githubToken := os.Getenv("GITHUB_TOKEN")
 	if githubToken == "" {
@@ -64,7 +62,6 @@ func New() (*Handler, error) {
 	}, nil
 }
 
-// Handle processes the incoming API Gateway request
 func (h *Handler) Handle(ctx context.Context, request events.APIGatewayProxyRequest) (events.APIGatewayProxyResponse, error) {
 	log.Printf("Received request: %s", request.Body)
 
@@ -100,13 +97,7 @@ func (h *Handler) Handle(ctx context.Context, request events.APIGatewayProxyRequ
 			// Continue processing even if rate limit check fails
 		} else if !rateLimitResult.Allowed {
 			log.Printf("Rate limit exceeded for IP %s: %d/%d requests used", ipAddress, rateLimitResult.RequestsUsed, rateLimitResult.RequestsLimit)
-			nextAvailableStr := rateLimitResult.NextAvailable.Format("3:04pm MST")
-			errorMsg := fmt.Sprintf("Rate limit: %d requests per hour. You've used %d/%d. Next available: %s",
-				rateLimitResult.RequestsLimit,
-				rateLimitResult.RequestsUsed,
-				rateLimitResult.RequestsLimit,
-				nextAvailableStr)
-			return h.errorResponse(429, errorMsg)
+			return h.rateLimitErrorResponse(rateLimitResult)
 		}
 
 		// Generate unique request ID
@@ -196,7 +187,6 @@ func (h *Handler) Handle(ctx context.Context, request events.APIGatewayProxyRequ
 	return events.APIGatewayProxyResponse{}, nil
 }
 
-// invokeAsync invokes this Lambda function asynchronously
 func (h *Handler) invokeAsync(ctx context.Context, payload string) error {
 	functionName := os.Getenv("AWS_LAMBDA_FUNCTION_NAME")
 	if functionName == "" {
@@ -239,7 +229,6 @@ func (h *Handler) invokeAsync(ctx context.Context, payload string) error {
 	return nil
 }
 
-// processRepository handles the main business logic
 func (h *Handler) processRepository(ctx context.Context, req *models.Request, requestID string) (string, error) {
 	// Parse repository URL
 	owner, repo, err := github.ParseRepoURL(req.RepositoryURL)
@@ -580,7 +569,7 @@ func (h *Handler) processRepository(ctx context.Context, req *models.Request, re
 	return response, nil
 }
 
-// ensureTrailingNewline ensures content ends with a newline character (POSIX standard)
+// POSIX standard requires text files to end with a newline
 func ensureTrailingNewline(content string) string {
 	if content == "" {
 		return content
@@ -591,7 +580,6 @@ func ensureTrailingNewline(content string) string {
 	return content
 }
 
-// formatFileList creates a formatted string of files
 func formatFileList(analyzed []string, modified map[string]string) string {
 	var builder strings.Builder
 	builder.WriteString("\nAnalyzed:\n")
@@ -605,7 +593,6 @@ func formatFileList(analyzed []string, modified map[string]string) string {
 	return builder.String()
 }
 
-// formatModifiedFilesList creates a formatted string of modified files
 func formatModifiedFilesList(modified map[string]string) string {
 	var builder strings.Builder
 	for file := range modified {
@@ -614,7 +601,6 @@ func formatModifiedFilesList(modified map[string]string) string {
 	return builder.String()
 }
 
-// successResponse creates a successful API Gateway response
 func (h *Handler) successResponse(message string) (events.APIGatewayProxyResponse, error) {
 	return events.APIGatewayProxyResponse{
 		StatusCode: 200,
@@ -625,7 +611,6 @@ func (h *Handler) successResponse(message string) (events.APIGatewayProxyRespons
 	}, nil
 }
 
-// errorResponse creates an error API Gateway response
 func (h *Handler) errorResponse(statusCode int, message string) (events.APIGatewayProxyResponse, error) {
 	return events.APIGatewayProxyResponse{
 		StatusCode: statusCode,
@@ -636,5 +621,34 @@ func (h *Handler) errorResponse(statusCode int, message string) (events.APIGatew
 			"Access-Control-Allow-Headers": "Content-Type",
 		},
 		Body: fmt.Sprintf(`{"error": "%s"}`, message),
+	}, nil
+}
+
+func (h *Handler) rateLimitErrorResponse(rateLimitResult *ratelimit.RateLimitResult) (events.APIGatewayProxyResponse, error) {
+	rateLimitError := models.RateLimitError{
+		Error: "Rate limit exceeded",
+		RateLimit: models.RateLimitInfo{
+			Limit:      rateLimitResult.RequestsLimit,
+			Used:       rateLimitResult.RequestsUsed,
+			ResetAt:    rateLimitResult.NextAvailable.Unix(),
+			ResetAtISO: rateLimitResult.NextAvailable.Format(time.RFC3339),
+		},
+	}
+
+	body, err := json.Marshal(rateLimitError)
+	if err != nil {
+		log.Printf("Failed to marshal rate limit error: %v", err)
+		return h.errorResponse(429, "Rate limit exceeded")
+	}
+
+	return events.APIGatewayProxyResponse{
+		StatusCode: 429,
+		Headers: map[string]string{
+			"Content-Type":                 "application/json",
+			"Access-Control-Allow-Origin":  "*",
+			"Access-Control-Allow-Methods": "POST, OPTIONS",
+			"Access-Control-Allow-Headers": "Content-Type",
+		},
+		Body: string(body),
 	}, nil
 }

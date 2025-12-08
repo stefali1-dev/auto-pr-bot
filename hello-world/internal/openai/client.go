@@ -18,13 +18,11 @@ const (
 	gpt5Mini     = "gpt-5-mini"
 )
 
-// Client wraps OpenAI API interactions
 type Client struct {
 	apiKey     string
 	httpClient *http.Client
 }
 
-// NewClient creates a new OpenAI client
 func NewClient() (*Client, error) {
 	apiKey := os.Getenv("OPENAI_API_KEY")
 	if apiKey == "" {
@@ -39,46 +37,38 @@ func NewClient() (*Client, error) {
 	}, nil
 }
 
-// FilesToReadResponse represents the structured output from the first LLM call
 type FilesToReadResponse struct {
 	FilesToRead []string `json:"filesToRead"`
 }
 
-// FilesToModifyResponse represents the structured output from the second LLM call
 type FilesToModifyResponse struct {
 	FilesToModify []string `json:"filesToModify"`
 	Explanation   string   `json:"explanation"`
 }
 
-// PromptValidationResponse represents the validation result from the LLM
 type PromptValidationResponse struct {
 	IsValid bool   `json:"isValid"`
 	Reason  string `json:"reason"`
 }
 
-// FileModificationResponse represents the modified file content from the third LLM call
 type FileModificationResponse struct {
 	FilePath        string `json:"filePath"`
 	ModifiedContent string `json:"modifiedContent"`
 }
 
-// ConversationHistory maintains the context of LLM conversations
 type ConversationHistory struct {
 	Messages []Message
 }
 
-// AddMessage adds a message to the conversation history
 func (ch *ConversationHistory) AddMessage(role, content string) {
 	ch.Messages = append(ch.Messages, Message{Role: role, Content: content})
 }
 
-// Message represents a chat message
 type Message struct {
 	Role    string `json:"role"`
 	Content string `json:"content"`
 }
 
-// ChatCompletionRequest represents the request to OpenAI
 type ChatCompletionRequest struct {
 	Model               string    `json:"model"`
 	Messages            []Message `json:"messages"`
@@ -89,7 +79,6 @@ type ChatCompletionRequest struct {
 	} `json:"response_format,omitempty"`
 }
 
-// ChatCompletionResponse represents the response from OpenAI
 type ChatCompletionResponse struct {
 	ID      string `json:"id"`
 	Object  string `json:"object"`
@@ -110,7 +99,6 @@ type ChatCompletionResponse struct {
 	} `json:"usage"`
 }
 
-// ValidatePrompt checks if the modification prompt is clear, specific, and actionable
 func (c *Client) ValidatePrompt(ctx context.Context, modificationPrompt string) (bool, string, error) {
 	systemPrompt := `You are an expert at evaluating software modification requests. Your task is to determine if a modification prompt has enough information to create a meaningful pull request.
 
@@ -171,7 +159,6 @@ Is this prompt clear and specific enough to create a meaningful pull request?`, 
 	return validation.IsValid, validation.Reason, nil
 }
 
-// AnalyzeRepositoryForFiles asks the LLM which files it needs to read to understand the modification request
 func (c *Client) AnalyzeRepositoryForFiles(ctx context.Context, fileStructure, modificationPrompt string) (*ConversationHistory, []string, error) {
 	history := &ConversationHistory{}
 
@@ -235,7 +222,6 @@ Which files do I need to read?`, fileStructure, modificationPrompt)
 	return history, filesResponse.FilesToRead, nil
 }
 
-// DetermineFilesToModify asks the LLM which files need to be modified after reading the relevant files
 func (c *Client) DetermineFilesToModify(ctx context.Context, history *ConversationHistory, fileContents map[string]string, modificationPrompt string) ([]string, string, error) {
 	// Build file contents section
 	var contentBuilder strings.Builder
@@ -290,7 +276,6 @@ IMPORTANT for the "explanation" field:
 	return modifyResponse.FilesToModify, modifyResponse.Explanation, nil
 }
 
-// GenerateModifiedFile asks the LLM to generate the complete modified content for a specific file
 func (c *Client) GenerateModifiedFile(ctx context.Context, history *ConversationHistory, filePath, originalContent, modificationPrompt string) (string, error) {
 	userPrompt := fmt.Sprintf(`Please provide the complete modified content for the file: %s
 
@@ -326,7 +311,6 @@ Return it as plain text, not JSON. Just the file content exactly as it should be
 	return response, nil
 }
 
-// makeAPICall handles the HTTP request to OpenAI API with retry logic
 func (c *Client) makeAPICall(ctx context.Context, reqBody ChatCompletionRequest) (string, error) {
 	const maxRetries = 3
 	var lastErr error
@@ -357,7 +341,6 @@ func (c *Client) makeAPICall(ctx context.Context, reqBody ChatCompletionRequest)
 	return "", fmt.Errorf("failed after %d attempts: %w", maxRetries, lastErr)
 }
 
-// doAPICall performs a single API call without retry logic
 func (c *Client) doAPICall(ctx context.Context, reqBody ChatCompletionRequest) (string, error) {
 	jsonBody, err := json.Marshal(reqBody)
 	if err != nil {
@@ -402,7 +385,6 @@ func (c *Client) doAPICall(ctx context.Context, reqBody ChatCompletionRequest) (
 	return completion.Choices[0].Message.Content, nil
 }
 
-// APIError represents an error from the OpenAI API
 type APIError struct {
 	StatusCode int
 	Message    string
@@ -412,7 +394,6 @@ func (e *APIError) Error() string {
 	return fmt.Sprintf("OpenAI API error (status %d): %s", e.StatusCode, e.Message)
 }
 
-// isRetryableError determines if an error should be retried
 func isRetryableError(err error) bool {
 	var apiErr *APIError
 	if errors, ok := err.(*APIError); ok {

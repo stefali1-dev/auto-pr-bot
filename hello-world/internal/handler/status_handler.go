@@ -11,12 +11,10 @@ import (
 	"github.com/aws/aws-lambda-go/events"
 )
 
-// StatusHandler handles status check requests
 type StatusHandler struct {
 	tracker *status.Tracker
 }
 
-// NewStatusHandler creates a new status handler
 func NewStatusHandler() (*StatusHandler, error) {
 	tracker, err := status.NewTracker(context.Background())
 	if err != nil {
@@ -28,7 +26,6 @@ func NewStatusHandler() (*StatusHandler, error) {
 	}, nil
 }
 
-// Handle processes the GET /status/{requestId} request
 func (h *StatusHandler) Handle(ctx context.Context, request events.APIGatewayProxyRequest) (events.APIGatewayProxyResponse, error) {
 	// Extract requestId from path parameters
 	requestID, ok := request.PathParameters["requestId"]
@@ -80,7 +77,6 @@ func (h *StatusHandler) Handle(ctx context.Context, request events.APIGatewayPro
 	}, nil
 }
 
-// errorResponse creates an error API Gateway response
 func (h *StatusHandler) errorResponse(statusCode int, message string) (events.APIGatewayProxyResponse, error) {
 	return events.APIGatewayProxyResponse{
 		StatusCode: statusCode,

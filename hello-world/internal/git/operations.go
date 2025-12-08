@@ -12,14 +12,12 @@ const (
 	tmpDir = "/tmp"
 )
 
-// CloneOptions contains options for cloning a repository
 type CloneOptions struct {
 	URL       string
 	Directory string
 	Token     string
 }
 
-// CloneRepository clones a repository to the specified directory in /tmp
 func CloneRepository(opts CloneOptions) (string, error) {
 	// Create the full path in /tmp
 	clonePath := filepath.Join(tmpDir, opts.Directory)
@@ -42,7 +40,6 @@ func CloneRepository(opts CloneOptions) (string, error) {
 	return clonePath, nil
 }
 
-// ListFiles recursively lists all files in a directory, returning a tree structure
 func ListFiles(rootPath string) (string, error) {
 	var builder strings.Builder
 
@@ -87,8 +84,7 @@ func ListFiles(rootPath string) (string, error) {
 	return builder.String(), nil
 }
 
-// ReadFileContent reads a file and returns its content
-// For large files (>2000 lines), it returns the first 1000 and last 1000 lines with a truncation notice
+// Large files (>2000 lines) are truncated to first 1000 + last 1000 lines
 func ReadFileContent(filePath string) (string, error) {
 	content, err := os.ReadFile(filePath)
 	if err != nil {
@@ -124,21 +120,21 @@ func WriteFile(filePath, content string) error {
 	return nil
 }
 
-// ResetToUpstream resets the fork's main branch to match upstream
-func ResetToUpstream(repoPath, upstreamOwner, upstreamRepo, defaultBranch string) error {
+// Adds upstream remote, fetches it, and hard resets to match
+func ResetToUpstream(repoPath, upstreamOwner, upstreamRepo, baseBranch string) error {
 	// Add upstream remote if it doesn't exist
 	remoteURL := fmt.Sprintf("https://github.com/%s/%s.git", upstreamOwner, upstreamRepo)
 	addRemoteCmd := exec.Command("git", "-C", repoPath, "remote", "add", "upstream", remoteURL)
 	addRemoteCmd.CombinedOutput() // Ignore error if upstream already exists
 
 	// Fetch upstream
-	fetchCmd := exec.Command("git", "-C", repoPath, "fetch", "upstream", defaultBranch)
+	fetchCmd := exec.Command("git", "-C", repoPath, "fetch", "upstream", baseBranch)
 	if output, err := fetchCmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("git fetch upstream failed: %w, output: %s", err, string(output))
 	}
 
 	// Reset to upstream
-	resetCmd := exec.Command("git", "-C", repoPath, "reset", "--hard", fmt.Sprintf("upstream/%s", defaultBranch))
+	resetCmd := exec.Command("git", "-C", repoPath, "reset", "--hard", fmt.Sprintf("upstream/%s", baseBranch))
 	if output, err := resetCmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("git reset failed: %w, output: %s", err, string(output))
 	}
@@ -146,7 +142,6 @@ func ResetToUpstream(repoPath, upstreamOwner, upstreamRepo, defaultBranch string
 	return nil
 }
 
-// CreateAndCheckoutBranch creates a new branch and checks it out
 func CreateAndCheckoutBranch(repoPath, branchName string) error {
 	checkoutCmd := exec.Command("git", "-C", repoPath, "checkout", "-b", branchName)
 	if output, err := checkoutCmd.CombinedOutput(); err != nil {
@@ -155,7 +150,6 @@ func CreateAndCheckoutBranch(repoPath, branchName string) error {
 	return nil
 }
 
-// CommitAndPush commits changes and pushes to the remote repository on a specific branch
 func CommitAndPush(repoPath, branchName, commitMessage, token string) error {
 	// Configure git user for the commit
 	configCmds := [][]string{
@@ -202,7 +196,6 @@ func CommitAndPush(repoPath, branchName, commitMessage, token string) error {
 	return nil
 }
 
-// Cleanup removes the cloned repository from /tmp
 func Cleanup(clonePath string) error {
 	if err := os.RemoveAll(clonePath); err != nil {
 		return fmt.Errorf("failed to cleanup: %w", err)

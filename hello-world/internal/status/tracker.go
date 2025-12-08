@@ -15,7 +15,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 )
 
-// Represents the current status of a PR request
 type Status string
 
 const (
@@ -32,7 +31,6 @@ const (
 	StatusError      Status = "error"
 )
 
-// Represents a status record in DynamoDB
 type StatusRecord struct {
 	RequestID    string `dynamodbav:"requestId"`
 	Status       string `dynamodbav:"status"`
@@ -45,13 +43,11 @@ type StatusRecord struct {
 	ExpiresAt    int64  `dynamodbav:"expiresAt"`
 }
 
-// Handles DynamoDB operations for status tracking
 type Tracker struct {
 	client    *dynamodb.Client
 	tableName string
 }
 
-// Creates a new status tracker
 func NewTracker(ctx context.Context) (*Tracker, error) {
 	tableName := os.Getenv("STATUS_TABLE_NAME")
 	if tableName == "" {
@@ -69,7 +65,6 @@ func NewTracker(ctx context.Context) (*Tracker, error) {
 	}, nil
 }
 
-// Updates the status for a request
 func (t *Tracker) Update(ctx context.Context, requestID string, status Status, message string, step int, repository string) error {
 	record := StatusRecord{
 		RequestID:  requestID,
@@ -102,7 +97,6 @@ func (t *Tracker) Update(ctx context.Context, requestID string, status Status, m
 	return nil
 }
 
-// Marks a request as completed with PR URL
 func (t *Tracker) Complete(ctx context.Context, requestID string, prURL string, repository string) error {
 	record := StatusRecord{
 		RequestID:  requestID,
@@ -135,7 +129,6 @@ func (t *Tracker) Complete(ctx context.Context, requestID string, prURL string, 
 	return nil
 }
 
-// Marks a request as rejected due to invalid/unclear prompt
 func (t *Tracker) Reject(ctx context.Context, requestID string, reason string, repository string) error {
 	record := StatusRecord{
 		RequestID:    requestID,
@@ -167,7 +160,6 @@ func (t *Tracker) Reject(ctx context.Context, requestID string, reason string, r
 	return nil
 }
 
-// Marks a request as failed
 func (t *Tracker) Error(ctx context.Context, requestID string, errorMsg string, repository string) error {
 	record := StatusRecord{
 		RequestID:    requestID,
@@ -199,7 +191,6 @@ func (t *Tracker) Error(ctx context.Context, requestID string, errorMsg string, 
 	return nil
 }
 
-// Retrieves the status for a request
 func (t *Tracker) Get(ctx context.Context, requestID string) (*StatusRecord, error) {
 	input := &dynamodb.GetItemInput{
 		TableName: aws.String(t.tableName),
@@ -248,16 +239,14 @@ func ParseStepFromStatus(status Status) int {
 	return 0
 }
 
-// Formats a Unix timestamp to a human-readable string
 func FormatTimestamp(timestamp int64) string {
 	return time.Unix(timestamp, 0).Format(time.RFC3339)
 }
 
-// Parses a string timestamp to Unix time
-func ParseTimestamp(timestampStr string) (int64, error) {
-	timestamp, err := strconv.ParseInt(timestampStr, 10, 64)
+func ParseTimestamp(timestamp string) (int64, error) {
+	ts, err := strconv.ParseInt(timestamp, 10, 64)
 	if err != nil {
 		return 0, fmt.Errorf("invalid timestamp: %w", err)
 	}
-	return timestamp, nil
+	return ts, nil
 }
