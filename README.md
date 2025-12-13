@@ -26,6 +26,18 @@ Send a POST request to the Lambda endpoint with the following JSON body:
 }
 ```
 
+Example Curl:
+
+```bash
+curl -X POST https://c3wy3ydime.execute-api.eu-central-1.amazonaws.com/Prod/process \
+  -H "Content-Type: application/json" \
+  -d '{
+    "repositoryUrl": "https://github.com/FrentescuCezar/FII-BachelorThesis",
+    "modificationPrompt": "Add a comment to the README.md file saying Hello World",
+    "githubUsername": "stefali1-dev"
+  }'
+```
+
 ## Environment Variables
 
 Create an `env.json` file (see `env.json.example`) with:
