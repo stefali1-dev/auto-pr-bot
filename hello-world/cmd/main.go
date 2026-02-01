@@ -23,7 +23,13 @@ func lambdaHandler(ctx context.Context, request events.APIGatewayProxyRequest) (
 			log.Printf("Failed to initialize status handler: %v", err)
 			return events.APIGatewayProxyResponse{
 				StatusCode: 500,
-				Body:       `{"error": "Internal server error"}`,
+				Headers: map[string]string{
+					"Content-Type":                 "application/json",
+					"Access-Control-Allow-Origin":  "*",
+					"Access-Control-Allow-Methods": "GET, OPTIONS",
+					"Access-Control-Allow-Headers": "Content-Type",
+				},
+				Body: `{"error": "Internal server error"}`,
 			}, nil
 		}
 		return h.Handle(ctx, request)
@@ -35,7 +41,13 @@ func lambdaHandler(ctx context.Context, request events.APIGatewayProxyRequest) (
 		log.Printf("Failed to initialize handler: %v", err)
 		return events.APIGatewayProxyResponse{
 			StatusCode: 500,
-			Body:       `{"error": "Internal server error"}`,
+			Headers: map[string]string{
+				"Content-Type":                 "application/json",
+				"Access-Control-Allow-Origin":  "*",
+				"Access-Control-Allow-Methods": "POST, OPTIONS",
+				"Access-Control-Allow-Headers": "Content-Type",
+			},
+			Body: `{"error": "Internal server error"}`,
 		}, nil
 	}
 
